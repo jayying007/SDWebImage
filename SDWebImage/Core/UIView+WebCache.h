@@ -9,7 +9,6 @@
 #import "SDWebImageCompat.h"
 #import "SDWebImageDefine.h"
 #import "SDWebImageManager.h"
-#import "SDWebImageTransition.h"
 #import "SDWebImageIndicator.h"
 #import "UIView+WebCacheOperation.h"
 #import "UIView+WebCacheState.h"
@@ -90,24 +89,7 @@ typedef void(^SDSetImageBlock)(UIImage * _Nullable image, NSData * _Nullable ima
                                                       progress:(nullable SDImageLoaderProgressBlock)progressBlock
                                                      completed:(nullable SDInternalCompletionBlock)completedBlock;
 
-/**
- * Cancel the current image load
- * This simply translate to `[self sd_cancelImageLoadOperationWithKey:self.sd_latestOperationKey]` from v5.18.0
- * 
- * @warning This method should be only used for single state view, like `UIImageView` without highlighted state. For stateful view like `UIBUtton` (one view can have multiple images loading), use `sd_cancelImageLoadOperationWithKey:` instead. See `UIView+WebCacheOperation.h` for more information.
- */
-- (void)sd_cancelCurrentImageLoad;
-
 #if SD_UIKIT || SD_MAC
-
-#pragma mark - Image Transition
-
-/**
- The image transition when image load finished. See `SDWebImageTransition`.
- If you specify nil, do not do transition. Defaults to nil.
- @warning This property should be only used for single state view, like `UIImageView` without highlighted state. For stateful view like `UIBUtton` (one view can have multiple images loading), write your own implementation in `setImageBlock:`, and check current stateful view's state to render the UI.
- */
-@property (nonatomic, strong, nullable) SDWebImageTransition *sd_imageTransition;
 
 #pragma mark - Image Indicator
 

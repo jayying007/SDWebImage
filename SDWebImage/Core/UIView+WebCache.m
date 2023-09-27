@@ -67,6 +67,7 @@ const int64_t SDWebImageProgressUnitCountUnknown = 1LL;
     } else {
         context = [NSDictionary dictionary];
     }
+    // 设置一个operationKey，对于UIButton这种多状态图片的有用
     NSString *validOperationKey = context[SDWebImageContextSetImageOperationKey];
     if (!validOperationKey) {
         // pass through the operation key to downstream, which can used for tracing operation or image view class
@@ -76,10 +77,12 @@ const int64_t SDWebImageProgressUnitCountUnknown = 1LL;
         context = [mutableContext copy];
     }
     self.sd_latestOperationKey = validOperationKey;
+    // 取消之前的下载任务
     if (!(SD_OPTIONS_CONTAINS(options, SDWebImageAvoidAutoCancelImage))) {
         // cancel previous loading for the same set-image operation key by default
         [self sd_cancelImageLoadOperationWithKey:validOperationKey];
     }
+    
     SDWebImageLoadState *loadState = [self sd_imageLoadStateForKey:validOperationKey];
     if (!loadState) {
         loadState = [SDWebImageLoadState new];
@@ -88,27 +91,14 @@ const int64_t SDWebImageProgressUnitCountUnknown = 1LL;
     [self sd_setImageLoadState:loadState forKey:validOperationKey];
     
     SDWebImageManager *manager = context[SDWebImageContextCustomManager];
-    if (!manager) {
-        manager = [SDWebImageManager sharedManager];
-    } else {
+    if (manager) {
         // remove this manager to avoid retain cycle (manger -> loader -> operation -> context -> manager)
         SDWebImageMutableContext *mutableContext = [context mutableCopy];
         mutableContext[SDWebImageContextCustomManager] = nil;
         context = [mutableContext copy];
     }
     
-    BOOL shouldUseWeakCache = NO;
-    if ([manager.imageCache isKindOfClass:SDImageCache.class]) {
-        shouldUseWeakCache = ((SDImageCache *)manager.imageCache).config.shouldUseWeakMemoryCache;
-    }
     if (!(options & SDWebImageDelayPlaceholder)) {
-        if (shouldUseWeakCache) {
-            NSString *key = [manager cacheKeyForURL:url context:context];
-            // call memory cache to trigger weak cache sync logic, ignore the return value and go on normal query
-            // this unfortunately will cause twice memory cache query, but it's fast enough
-            // in the future the weak cache feature may be re-design or removed
-            [((SDImageCache *)manager.imageCache) imageFromMemoryCacheForKey:key];
-        }
         dispatch_main_async_safe(^{
             [self sd_setImage:placeholder imageData:nil basedOnClassOrViaCustomSetImageBlock:setImageBlock cacheType:SDImageCacheTypeNone imageURL:url];
         });
@@ -174,7 +164,7 @@ const int64_t SDWebImageProgressUnitCountUnknown = 1LL;
             SDWebImageNoParamsBlock callCompletedBlockClosure = ^{
                 if (!self) { return; }
                 if (!shouldNotSetImage) {
-                    [self sd_setNeedsLayout];
+                    [self setNeedsLayout];
                 }
                 if (completedBlock && shouldCallCompletedBlock) {
                     completedBlock(image, data, error, cacheType, finished, url);
@@ -201,41 +191,8 @@ const int64_t SDWebImageProgressUnitCountUnknown = 1LL;
                 targetData = nil;
             }
             
-#if SD_UIKIT || SD_MAC
-            // check whether we should use the image transition
-            SDWebImageTransition *transition = nil;
-            BOOL shouldUseTransition = NO;
-            if (options & SDWebImageForceTransition) {
-                // Always
-                shouldUseTransition = YES;
-            } else if (cacheType == SDImageCacheTypeNone) {
-                // From network
-                shouldUseTransition = YES;
-            } else {
-                // From disk (and, user don't use sync query)
-                if (cacheType == SDImageCacheTypeMemory) {
-                    shouldUseTransition = NO;
-                } else if (cacheType == SDImageCacheTypeDisk) {
-                    if (options & SDWebImageQueryMemoryDataSync || options & SDWebImageQueryDiskDataSync) {
-                        shouldUseTransition = NO;
-                    } else {
-                        shouldUseTransition = YES;
-                    }
-                } else {
-                    // Not valid cache type, fallback
-                    shouldUseTransition = NO;
-                }
-            }
-            if (finished && shouldUseTransition) {
-                transition = self.sd_imageTransition;
-            }
-#endif
             dispatch_main_async_safe(^{
-#if SD_UIKIT || SD_MAC
-                [self sd_setImage:targetImage imageData:targetData basedOnClassOrViaCustomSetImageBlock:setImageBlock transition:transition cacheType:cacheType imageURL:imageURL];
-#else
                 [self sd_setImage:targetImage imageData:targetData basedOnClassOrViaCustomSetImageBlock:setImageBlock cacheType:cacheType imageURL:imageURL];
-#endif
                 callCompletedBlockClosure();
             });
         }];
@@ -255,158 +212,33 @@ const int64_t SDWebImageProgressUnitCountUnknown = 1LL;
     return operation;
 }
 
-- (void)sd_cancelCurrentImageLoad {
-    [self sd_cancelImageLoadOperationWithKey:self.sd_latestOperationKey];
-}
-
+#if SD_UIKIT || SD_MAC
 - (void)sd_setImage:(UIImage *)image imageData:(NSData *)imageData basedOnClassOrViaCustomSetImageBlock:(SDSetImageBlock)setImageBlock cacheType:(SDImageCacheType)cacheType imageURL:(NSURL *)imageURL {
-#if SD_UIKIT || SD_MAC
-    [self sd_setImage:image imageData:imageData basedOnClassOrViaCustomSetImageBlock:setImageBlock transition:nil cacheType:cacheType imageURL:imageURL];
-#else
-    // watchOS does not support view transition. Simplify the logic
-    if (setImageBlock) {
-        setImageBlock(image, imageData, cacheType, imageURL);
-    } else if ([self isKindOfClass:[UIImageView class]]) {
-        UIImageView *imageView = (UIImageView *)self;
-        [imageView setImage:image];
-    }
-#endif
-}
-
-#if SD_UIKIT || SD_MAC
-- (void)sd_setImage:(UIImage *)image imageData:(NSData *)imageData basedOnClassOrViaCustomSetImageBlock:(SDSetImageBlock)setImageBlock transition:(SDWebImageTransition *)transition cacheType:(SDImageCacheType)cacheType imageURL:(NSURL *)imageURL {
-    UIView *view = self;
     SDSetImageBlock finalSetImageBlock;
     if (setImageBlock) {
         finalSetImageBlock = setImageBlock;
-    } else if ([view isKindOfClass:[UIImageView class]]) {
-        UIImageView *imageView = (UIImageView *)view;
+    } else if ([self isKindOfClass:[UIImageView class]]) {
+        UIImageView *imageView = (UIImageView *)self;
         finalSetImageBlock = ^(UIImage *setImage, NSData *setImageData, SDImageCacheType setCacheType, NSURL *setImageURL) {
             imageView.image = setImage;
         };
     }
 #if SD_UIKIT
-    else if ([view isKindOfClass:[UIButton class]]) {
-        UIButton *button = (UIButton *)view;
+    else if ([self isKindOfClass:[UIButton class]]) {
+        UIButton *button = (UIButton *)self;
         finalSetImageBlock = ^(UIImage *setImage, NSData *setImageData, SDImageCacheType setCacheType, NSURL *setImageURL) {
             [button setImage:setImage forState:UIControlStateNormal];
         };
     }
 #endif
-#if SD_MAC
-    else if ([view isKindOfClass:[NSButton class]]) {
-        NSButton *button = (NSButton *)view;
-        finalSetImageBlock = ^(UIImage *setImage, NSData *setImageData, SDImageCacheType setCacheType, NSURL *setImageURL) {
-            button.image = setImage;
-        };
-    }
-#endif
     
-    if (transition) {
-        NSString *originalOperationKey = view.sd_latestOperationKey;
-
-#if SD_UIKIT
-        [UIView transitionWithView:view duration:0 options:0 animations:^{
-            if (!view.sd_latestOperationKey || ![originalOperationKey isEqualToString:view.sd_latestOperationKey]) {
-                return;
-            }
-            // 0 duration to let UIKit render placeholder and prepares block
-            if (transition.prepares) {
-                transition.prepares(view, image, imageData, cacheType, imageURL);
-            }
-        } completion:^(BOOL tempFinished) {
-            [UIView transitionWithView:view duration:transition.duration options:transition.animationOptions animations:^{
-                if (!view.sd_latestOperationKey || ![originalOperationKey isEqualToString:view.sd_latestOperationKey]) {
-                    return;
-                }
-                if (finalSetImageBlock && !transition.avoidAutoSetImage) {
-                    finalSetImageBlock(image, imageData, cacheType, imageURL);
-                }
-                if (transition.animations) {
-                    transition.animations(view, image);
-                }
-            } completion:^(BOOL finished) {
-                if (!view.sd_latestOperationKey || ![originalOperationKey isEqualToString:view.sd_latestOperationKey]) {
-                    return;
-                }
-                if (transition.completion) {
-                    transition.completion(finished);
-                }
-            }];
-        }];
-#elif SD_MAC
-        [NSAnimationContext runAnimationGroup:^(NSAnimationContext * _Nonnull prepareContext) {
-            if (!view.sd_latestOperationKey || ![originalOperationKey isEqualToString:view.sd_latestOperationKey]) {
-                return;
-            }
-            // 0 duration to let AppKit render placeholder and prepares block
-            prepareContext.duration = 0;
-            if (transition.prepares) {
-                transition.prepares(view, image, imageData, cacheType, imageURL);
-            }
-        } completionHandler:^{
-            [NSAnimationContext runAnimationGroup:^(NSAnimationContext * _Nonnull context) {
-                if (!view.sd_latestOperationKey || ![originalOperationKey isEqualToString:view.sd_latestOperationKey]) {
-                    return;
-                }
-                context.duration = transition.duration;
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wdeprecated-declarations"
-                CAMediaTimingFunction *timingFunction = transition.timingFunction;
-#pragma clang diagnostic pop
-                if (!timingFunction) {
-                    timingFunction = SDTimingFunctionFromAnimationOptions(transition.animationOptions);
-                }
-                context.timingFunction = timingFunction;
-                context.allowsImplicitAnimation = SD_OPTIONS_CONTAINS(transition.animationOptions, SDWebImageAnimationOptionAllowsImplicitAnimation);
-                if (finalSetImageBlock && !transition.avoidAutoSetImage) {
-                    finalSetImageBlock(image, imageData, cacheType, imageURL);
-                }
-                CATransition *trans = SDTransitionFromAnimationOptions(transition.animationOptions);
-                if (trans) {
-                    [view.layer addAnimation:trans forKey:kCATransition];
-                }
-                if (transition.animations) {
-                    transition.animations(view, image);
-                }
-            } completionHandler:^{
-                if (!view.sd_latestOperationKey || ![originalOperationKey isEqualToString:view.sd_latestOperationKey]) {
-                    return;
-                }
-                if (transition.completion) {
-                    transition.completion(YES);
-                }
-            }];
-        }];
-#endif
-    } else {
-        if (finalSetImageBlock) {
-            finalSetImageBlock(image, imageData, cacheType, imageURL);
-        }
+    if (finalSetImageBlock) {
+        finalSetImageBlock(image, imageData, cacheType, imageURL);
     }
 }
 #endif
-
-- (void)sd_setNeedsLayout {
-#if SD_UIKIT
-    [self setNeedsLayout];
-#elif SD_MAC
-    [self setNeedsLayout:YES];
-#elif SD_WATCH
-    // Do nothing because WatchKit automatically layout the view after property change
-#endif
-}
 
 #if SD_UIKIT || SD_MAC
-
-#pragma mark - Image Transition
-- (SDWebImageTransition *)sd_imageTransition {
-    return objc_getAssociatedObject(self, @selector(sd_imageTransition));
-}
-
-- (void)setSd_imageTransition:(SDWebImageTransition *)sd_imageTransition {
-    objc_setAssociatedObject(self, @selector(sd_imageTransition), sd_imageTransition, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-}
 
 #pragma mark - Indicator
 - (id<SDWebImageIndicator>)sd_imageIndicator {
@@ -426,11 +258,7 @@ const int64_t SDWebImageProgressUnitCountUnknown = 1LL;
         view.frame = self.bounds;
     }
     // Center the indicator view
-#if SD_MAC
-    [view setFrameOrigin:CGPointMake(round((NSWidth(self.bounds) - NSWidth(view.frame)) / 2), round((NSHeight(self.bounds) - NSHeight(view.frame)) / 2))];
-#else
     view.center = CGPointMake(CGRectGetMidX(self.bounds), CGRectGetMidY(self.bounds));
-#endif
     view.hidden = NO;
     [self addSubview:view];
 }

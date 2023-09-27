@@ -8,7 +8,6 @@
 
 #import "UIImage+MultiFormat.h"
 #import "SDImageCodersManager.h"
-#import "SDAnimatedImageRep.h"
 
 @implementation UIImage (MultiFormat)
 

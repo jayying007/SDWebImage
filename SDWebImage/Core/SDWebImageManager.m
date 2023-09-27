@@ -96,23 +96,6 @@ static id<SDImageLoader> _defaultImageLoader;
     return self;
 }
 
-- (nullable NSString *)cacheKeyForURL:(nullable NSURL *)url {
-    if (!url) {
-        return @"";
-    }
-    
-    NSString *key;
-    // Cache Key Filter
-    id<SDWebImageCacheKeyFilter> cacheKeyFilter = self.cacheKeyFilter;
-    if (cacheKeyFilter) {
-        key = [cacheKeyFilter cacheKeyForURL:url];
-    } else {
-        key = url.absoluteString;
-    }
-    
-    return key;
-}
-
 - (nullable NSString *)originalCacheKeyForURL:(nullable NSURL *)url context:(nullable SDWebImageContext *)context {
     if (!url) {
         return @"";
@@ -260,21 +243,6 @@ static id<SDImageLoader> _defaultImageLoader;
     isRunning = (self.runningOperations.count > 0);
     SD_UNLOCK(_runningOperationsLock);
     return isRunning;
-}
-
-- (void)removeFailedURL:(NSURL *)url {
-    if (!url) {
-        return;
-    }
-    SD_LOCK(_failedURLsLock);
-    [self.failedURLs removeObject:url];
-    SD_UNLOCK(_failedURLsLock);
-}
-
-- (void)removeAllFailedURLs {
-    SD_LOCK(_failedURLsLock);
-    [self.failedURLs removeAllObjects];
-    SD_UNLOCK(_failedURLsLock);
 }
 
 #pragma mark - Private
